@@ -1,0 +1,100 @@
+CREATE OR REPLACE TABLE `sales_to_target` AS
+
+WITH baseSales AS (
+  SELECT
+  sales,
+  openSales,
+  keyAccountHoldingSales,
+  otherHoldingSales,
+  salesCost,
+  openSalesCost,
+  keyAccountHoldingCost,
+  otherHoldingCost,
+  CASE
+    WHEN LOWER(brand) LIKE '%allbirds%' THEN 'Allbirds'
+    WHEN LOWER(brand) LIKE '%vooray%' THEN 'VOORAY'
+    WHEN LOWER(brand) LIKE '%oofos%' THEN 'OOFOS'
+    ELSE brand
+  END AS brand,  
+  channel,
+  CASE
+    WHEN region = 'NZ' AND LOWER(sources) LIKE '%australia%' THEN 'Australia'
+    WHEN region = 'Aus' THEN 'Australia'
+    WHEN region = 'NZ' THEN 'New Zealand'
+    ELSE NULL
+  END AS country,
+  invoiceDate,
+  dispatchedDate,
+  estimatedDeliveryDate,
+  modifiedDate,
+  region,
+  branchId,
+  productTotal,
+  taxStatus,
+  taxRate,
+  unitPrice,
+  discount,
+  itemSalesDiscountShare,
+  itemOpenDiscountShare,
+  itemFreightShare,
+  qtyOrdered,
+  qtySold,
+  DATE_TRUNC(COALESCE(dispatchedDate, invoiceDate, estimatedDeliveryDate, modifiedDate), MONTH) AS filterDate
+  FROM `cleaned_anonymous_salesTable`
+),
+
+salesData AS (
+  SELECT
+    filterDate,
+    brand,
+    channel,
+    country,
+    SUM(sales) AS totalSales,
+    SUM(openSales) AS totalOpenSales,
+    SUM(keyAccountHoldingSales) AS totalKeyAccountHoldings,
+    SUM(otherHoldingSales) AS totalOtherHoldings,
+    SUM(salesCost) AS totalCost,
+    SUM(openSalesCost) AS totalOpenSalesCost,
+    SUM(keyAccountHoldingCost) AS totalKeyAccountHoldingCost,
+    SUM(otherHoldingCost) AS totalOtherHoldingCost
+  FROM baseSales
+  GROUP BY
+    filterDate,
+    brand,
+    channel,
+    country
+  ORDER BY
+    filterDate,
+    brand,
+    channel
+),
+
+semiFinal AS (
+
+SELECT
+  COALESCE(t1.filterDate, t2.Target_Period) AS salesDate,
+  COALESCE(t1.brand, t2.Brand) AS brand,
+  COALESCE(t1.channel, t2.Channel) AS channel,
+  COALESCE(t1.country, t2.Country) AS country,
+  COALESCE(totalSales, 0) AS totalSales,
+  COALESCE(totalOpenSales, 0) AS totalOpenSales,
+  COALESCE(totalKeyAccountHoldings, 0) AS totalKeyAccountHoldings,
+  COALESCE(totalOtherHoldings, 0) AS totalOtherHoldings,
+  COALESCE(totalCost, 0) AS totalCost,
+  COALESCE(totalOpenSalesCost, 0) AS totalOpenSalesCost,
+  COALESCE(totalKeyAccountHoldingCost, 0) AS totalKeyAccountHoldingCost,
+  COALESCE(totalOtherHoldingCost, 0) AS totalOtherHoldingCost,
+  COALESCE(t2.Targets, 0) AS salesTarget
+FROM salesData t1
+FULL OUTER JOIN `target_table` t2
+  ON t1.filterDate = t2.Target_Period
+  AND t1.country = t2.Country
+  AND t1.channel = t2.Channel
+  AND t1.brand = t2.Brand
+ORDER BY salesDate DESC
+)
+
+SELECT
+*
+FROM semiFinal
+WHERE salesDate >= DATE_TRUNC(DATE_SUB(CURRENT_DATE(), INTERVAL 1 YEAR), YEAR)
